@@ -438,8 +438,15 @@ local function showPreviewDialog()
     o.modeLabel = data.modeLabel or o.modeLabel
     o.tolerance = data.tolerance or o.tolerance
     o.soft = data.soft or o.soft
-    o.perFrame = data.perFrame
-    -- mantém os demais (contiguous, sample, sides) dos defaults salvos
+    -- booleanos: checagem explícita de nil (false é um valor válido)
+    if data.contiguous ~= nil then o.contiguous = data.contiguous end
+    if data.removeIslands ~= nil then o.removeIslands = data.removeIslands end
+    o.sample = data.sample or o.sample
+    if data.sideTop ~= nil then o.sideTop = data.sideTop end
+    if data.sideBottom ~= nil then o.sideBottom = data.sideBottom end
+    if data.sideLeft ~= nil then o.sideLeft = data.sideLeft end
+    if data.sideRight ~= nil then o.sideRight = data.sideRight end
+    if data.perFrame ~= nil then o.perFrame = data.perFrame end
     return o
   end
 
@@ -528,6 +535,51 @@ local function showPreviewDialog()
     value = initialOpts.soft,
     onchange = updatePreview,
   }
+  dlg:check{
+    id = "contiguous",
+    text = "Apagar somente áreas conectadas às bordas",
+    selected = initialOpts.contiguous,
+    onchange = updatePreview,
+  }
+  dlg:check{
+    id = "removeIslands",
+    text = "Apagar também ilhas internas",
+    selected = initialOpts.removeIslands,
+    onchange = updatePreview,
+  }
+  dlg:separator{ text = "Amostragem da borda" }
+  dlg:slider{
+    id = "sample",
+    label = "Espessura:",
+    min = 1, max = 32,
+    value = initialOpts.sample,
+    onchange = updatePreview,
+  }
+  dlg:check{
+    id = "sideTop",
+    text = "Topo",
+    selected = initialOpts.sideTop,
+    onchange = updatePreview,
+  }
+  dlg:check{
+    id = "sideBottom",
+    text = "Base",
+    selected = initialOpts.sideBottom,
+    onchange = updatePreview,
+  }
+  dlg:check{
+    id = "sideLeft",
+    text = "Esquerda",
+    selected = initialOpts.sideLeft,
+    onchange = updatePreview,
+  }
+  dlg:check{
+    id = "sideRight",
+    text = "Direita",
+    selected = initialOpts.sideRight,
+    onchange = updatePreview,
+  }
+  -- perFrame só afeta a confirmação final (re-análise por frame), sem preview instantâneo
   dlg:check{
     id = "perFrame",
     text = "Detectar fundo em cada frame ao confirmar",

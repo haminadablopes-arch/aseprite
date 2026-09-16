@@ -2,7 +2,7 @@
   "name": "smart-bg-remover",
   "displayName": "Removedor de Fundo Inteligente",
   "description": "Detecta automaticamente o padrão do fundo (cor sólida, xadrez, listras, tramas de dither, gradiente ou fundo ruidoso) e remove esse fundo de todos os frames selecionados na timeline. Preview ao vivo no canvas com Ctrl+Shift+B, reutiliza layer ' - removido' e oculta original sem diálogos.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": { "name": "haminadablopes" },
   "publisher": "haminadablopes",
   "license": "MIT",

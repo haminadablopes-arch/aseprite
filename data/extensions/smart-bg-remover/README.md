@@ -12,11 +12,14 @@ Novo fluxo (v0.5.0):
 
 1. Selecione os frames na timeline (ou deixe só o frame atual ativo).
 2. Pressione **Ctrl+Shift+B** ou clique com botão direito sobre a seleção > **Fundo Inteligente** > **Preview Remoção de Fundo (Ctrl+Shift+B)**
-3. No diálogo de preview, ajuste:
+3. No diálogo de preview, ajuste (tudo com atualização instantânea no canvas):
    - **Detecção**: Automático, Cor sólida, Padrão repetitivo, Gradiente, etc.
    - **Tolerância**: 0-128
    - **Suavizar bordas**: 0-64
-   - **Detectar fundo em cada frame ao confirmar**: marcado = re-analisa cada frame (mais preciso se fundo muda), desmarcado = usa o mesmo modelo do primeiro frame para todos (muito mais rápido)
+   - **Apagar somente áreas conectadas às bordas**
+   - **Apagar também ilhas internas**
+   - **Amostragem da borda**: **Espessura** (1-32) e lados **Topo / Base / Esquerda / Direita**
+   - **Detectar fundo em cada frame ao confirmar**: marcado = re-analisa cada frame (mais preciso se fundo muda), desmarcado = usa o mesmo modelo do primeiro frame para todos (muito mais rápido). Este só afeta a confirmação final.
 4. O resultado aparece **instantaneamente no canvas** no primeiro frame.
 5. Clique **Confirmar e aplicar a todos** para processar o resto dos frames. Ou **Cancelar** para desfazer o preview.
 
