@@ -584,10 +584,12 @@ dlg:separator{}
 dlg:button{ id = "ok", text = "Converter", onclick = function(ev)
   local spr = app.activeSprite
   if not spr then app.alert("ai2pixel: abra antes um sprite (a arte de IA).") return end
-  local maxColors = math.floor(ev.colors + 0.5)
-  local tol = ev.tol
-  local cleanup = math.floor(ev.cleanup + 0.5)
-  local fps = math.max(1, ev.fps)
+  -- no Aseprite os valores dos widgets vêm em ev.data (não em ev)
+  local d = ev.data or ev
+  local maxColors = math.floor((d.colors or 32) + 0.5)
+  local tol = d.tol or 90
+  local cleanup = math.floor((d.cleanup or 1) + 0.5)
+  local fps = math.max(1, d.fps or 12)
 
   -- leitura + chroma
   local frames = {}
@@ -597,7 +599,7 @@ dlg:button{ id = "ok", text = "Converter", onclick = function(ev)
   end
   if #frames == 0 then app.alert("ai2pixel: nenhum cel encontrado.") return end
   local keyInfo = nil
-  if ev.chroma then
+  if d.chroma then
     local d = detectChroma(frames[1])
     if d then
       keyInfo = d
@@ -665,8 +667,8 @@ dlg:button{ id = "ok", text = "Converter", onclick = function(ev)
     g.px, g.py, g.conf, nw, nh, #palette,
     exact and "EXATA — identidade preservada" or "k-means OKLab",
     table.concat(orph, ", "))
-  if ev.save and ev.out and ev.out ~= "" then
-    local base = ev.out:gsub("%.aseprite$", ""):gsub("%.gpl$", "")
+  if d.save and d.out and d.out ~= "" then
+    local base = d.out:gsub("%.aseprite$", ""):gsub("%.gpl$", "")
     out:saveAs(base .. ".aseprite")
     pal:saveAs(base .. ".gpl")
     msg = msg .. "\nsalvo: " .. base .. ".aseprite / .gpl"
