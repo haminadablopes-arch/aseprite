@@ -89,9 +89,25 @@ de histograma entre frames (flicker).
 
 ---
 
-## Como usar
+## Como usar — passo a passo
 
-### Studio web (recomendado — roda 100% no navegador, nada é enviado a servidores)
+### A · Extensão nativa do Aseprite (teste dentro do próprio editor)
+1. Baixe/gere o pacote: ele já vem pronto em
+   `studio/ai2pixel-extension.aseprite-extension` (ou regenere com
+   `cd aseprite-extension && zip -r ../studio/ai2pixel-extension.aseprite-extension package.json ai2pixel.lua`);
+2. No Aseprite: **Editar → Preferências → Extensões → Adicionar Extensão…**
+   e selecione o arquivo `.aseprite-extension`;
+3. Abra a arte de IA: para animações, **File → Open** no `frame_00.png` e
+   aceite o aviso de *carregar sequência* (ou abra a arte única);
+4. **File → Scripts → ai2pixel — Grade-Nativa**;
+5. Na janela: confirme máx. de cores (32), chroma-key auto, limpeza 1, fps;
+   marque *salvar* e escolha o prefixo de saída;
+6. Clique **Converter**. O pipeline roda 100% em Lua dentro do Aseprite e
+   abre um **novo sprite Indexed 1:1** com a animação e a paleta recuperada;
+   um alerta resume as métricas (grade, confiança, tamanho nativo, paleta
+   exata?, órfãos removidos).
+
+### B · Studio web (recomendado para lots grandes — roda 100% no navegador)
 ```bash
 cd tools/ai2pixel/studio
 python3 -m http.server 8090 --bind 0.0.0.0     # ou qualquer servidor estático
@@ -100,7 +116,7 @@ Abra `http://localhost:8090`, arraste as imagens (frames em ordem alfabética
 viram animação), ajuste parâmetros e exporte: ZIP de frames PNG nativos,
 sprite sheet, GIF, paletas `.gpl`/`.act` e relatório JSON.
 
-### CLI Python (lote, reproduzível)
+### C · CLI Python (lote, reproduzível)
 ```bash
 pip install -r tools/ai2pixel/requirements.txt
 python3 tools/ai2pixel/pipeline/ai2pixel.py -i frames/*.png -o out/ \
@@ -110,7 +126,7 @@ Principais opções: `--max-colors N` (teto da paleta; abaixo disso a paleta é
 exata), `--chroma auto|off|#RRGGBB`, `--tol`, `--cleanup 0|1|2`,
 `--dither off|bayer`, `--pitch N` (força a grade), `--preview-scale N`.
 
-### Validação (teste round-trip)
+### D · Validação (teste round-trip)
 ```bash
 python3 tools/ai2pixel/pipeline/roundtrip_test.py   # Python
 node tools/ai2pixel/studio/test_node.mjs             # port JS
@@ -123,7 +139,7 @@ Resultado medido: **~80–81% de cor exata sob JPEG+ruído** e **paleta/bbox 100
 recuperadas**; com entrada PNG sem perdas (o caso real das imagens de IA), a
 fidelidade sobe para ~95–100%, pois a etapa 4 torna a quantização não-destrutiva.
 
-### Integração com Aseprite
+### E · Integração fina com Aseprite (pós-conversão)
 * Abra os `frames_native/*.png` direto no Aseprite (já estão 1:1);
 * Carregue `palette.gpl` em *Editar → Paleta* (ou `palette.act`);
 * Automação: `aseprite -b sprite_sheet.png --split-grid 0,0,LARGURA,ALTURA
