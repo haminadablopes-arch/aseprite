@@ -336,6 +336,23 @@ local function runFinalRemoval(sprite, targets, opts, sharedModelForFirst, image
             else
               sprite:newCel(dest, t.frame, newImg, t.cel.position)
             end
+            -- propaga para cels vinculados (mesma imagem, qualquer layer) =>
+            -- animação sem buracos
+            local list = imageFrames and imageFrames[t.cel.image.id]
+            if list then
+              for _, e in ipairs(list) do
+                if not (e.frame == t.frame and e.layer == t.layer) then
+                  local dest2 = getOrCreateProcessedLayer(sprite, e.layer)
+                  processedMap[e.layer] = dest2
+                  local cel2 = dest2:cel(e.frame)
+                  if cel2 then
+                    cel2.image = newImg
+                  else
+                    sprite:newCel(dest2, e.frame, newImg, e.cel.position)
+                  end
+                end
+              end
+            end
           end
         end
       end
@@ -390,28 +407,46 @@ local function showPreviewDialog()
     originalProcessedVisible = processedLayer.isVisible
   end
 
-  -- estado pré-preview de CADA cel que for tocado (para restaurar tudo no cancel)
+  -- estado pré-preview de CADA cel que for tocado (para restaurar tudo no cancel).
+  -- Estratégia de memória: só cacheia bytes quando o conteúdo pré-existente difere
+  -- da layer original (re-run) e dentro de um teto (PREVIEW_BYTES_BUDGET); fora do
+  -- teto, restaura a partir da original (que não é modificada no preview). Sem isso,
+  -- N frames de 2048x2048 em re-run = ~GBs de RAM só para o cancelar.
+  local PREVIEW_BYTES_BUDGET = 256 * 1024 * 1024 -- 256MB
+  local previewBytes = 0
   local previewCels = {}
-  local function recordPreviewCel(frameNumber)
+  local function recordPreviewCel(frameNumber, srcCel)
     if previewCels[frameNumber] then return end
     local cel = processedLayer and processedLayer:cel(frameNumber)
-    if cel and cel.image then
-      previewCels[frameNumber] = { existed = true, bytes = cel.image.bytes,
-                                   spec = cel.image.spec, position = cel.position }
-    else
-      previewCels[frameNumber] = { existed = false }
+    local st = { existed = (cel and cel.image ~= nil), srcCel = srcCel }
+    if st.existed then
+      if srcCel and srcCel.image then
+        -- igual à original? restaurar da original já basta => zero cache
+        if cel.image.bytes ~= srcCel.image.bytes then
+          previewBytes = previewBytes + #cel.image.bytes
+          if previewBytes <= PREVIEW_BYTES_BUDGET then
+            st.bytes = cel.image.bytes
+            st.spec = cel.image.spec
+          end
+        end
+      else
+        -- sem fonte para restaurar depois: cache obrigatório
+        st.bytes = cel.image.bytes
+        st.spec = cel.image.spec
+      end
     end
+    previewCels[frameNumber] = st
   end
 
   -- escreve a imagem de preview num frame da layer processada (transação só como fallback)
-  local function writePreviewCel(frameNumber, posSrc, newImg)
-    recordPreviewCel(frameNumber)
+  local function writePreviewCel(frameNumber, srcCel, newImg)
+    recordPreviewCel(frameNumber, srcCel)
     local ok = pcall(function()
       local cel = processedLayer:cel(frameNumber)
       if cel then
         cel.image = newImg
       else
-        sprite:newCel(processedLayer, frameNumber, newImg, posSrc)
+        sprite:newCel(processedLayer, frameNumber, newImg, srcCel.position)
       end
     end)
     if not ok then
@@ -421,21 +456,22 @@ local function showPreviewDialog()
           if cel then
             cel.image = newImg
           else
-            sprite:newCel(processedLayer, frameNumber, newImg, posSrc)
+            sprite:newCel(processedLayer, frameNumber, newImg, srcCel.position)
           end
         end)
       end)
     end
   end
 
-  -- aplica no frame do alvo + propaga para cels vinculados (mesma imagem)
+  -- aplica no frame do alvo + propaga para cels vinculados (mesma imagem,
+  -- qualquer layer — mesmo critério do runFinalRemoval)
   local function applyPreviewImage(t, newImg)
-    writePreviewCel(t.frame, t.cel.position, newImg)
+    writePreviewCel(t.frame, t.cel, newImg)
     local list = imageFrames and imageFrames[t.cel.image.id]
     if list then
       for _, e in ipairs(list) do
-        if e.layer == t.layer and e.frame ~= t.frame then
-          writePreviewCel(e.frame, e.cel.position, newImg)
+        if not (e.frame == t.frame and e.layer == t.layer) then
+          writePreviewCel(e.frame, e.cel, newImg)
         end
       end
     end
@@ -449,7 +485,7 @@ local function showPreviewDialog()
       end
       -- registra o estado pré-preview de todos os alvos (antes de criar placeholders)
       for _, t in ipairs(targets) do
-        recordPreviewCel(t.frame)
+        recordPreviewCel(t.frame, t.cel)
       end
       -- garante que tem cel no primeiro frame (copia original como placeholder)
       local existing = processedLayer:cel(firstTarget.frame)
@@ -524,8 +560,15 @@ local function showPreviewDialog()
     return newImg
   end
 
-  -- preview instantâneo: só o primeiro frame (barato, responde durante o arraste)
+  -- preview instantâneo: só o primeiro frame. Durante o ARRASTE limita a
+  -- frequência (~10/s) — em frames grandes cada rodada custa centenas de ms;
+  -- o valor final sempre é garantido pelo onrelease (updateAllPreviews)
+  local lastQuickMs = 0
   local function updatePreview()
+    local now = os.clock() * 1000
+    if now - lastQuickMs < 100 then return end
+    lastQuickMs = now
+
     local curOpts = getDlgOpts()
     lastPreviewOpts = curOpts
     local algo = toAlgoOpts(curOpts)
@@ -773,22 +816,30 @@ local function showPreviewDialog()
         end
       else
         if processedLayer then
-          -- restaura cada cel tocado: existed => bytes originais; senão remove
+          -- restaura cada cel tocado, na ordem:
+          --   1. bytes cacheados          => restaura exato
+          --   2. cel na original          => restaura cópia da original (fallback)
+          --   3. existed sem fonte        => mantém o preview (não destrói conteúdo)
+          --   4. não existia              => remove o cel criado só para o preview
           for frameNumber, st in pairs(previewCels) do
             local cel = processedLayer:cel(frameNumber)
-            if st.existed then
+            if st.bytes and st.spec then
               if cel then
                 local restoreImg = Image(st.spec)
                 restoreImg.bytes = st.bytes
                 cel.image = restoreImg
-                if st.position then
-                  pcall(function() cel.position = st.position end)
-                end
               end
-            else
+            elseif st.srcCel and st.srcCel.image then
+              if cel then
+                local srcImg = Image(st.srcCel.image.spec)
+                srcImg.bytes = st.srcCel.image.bytes
+                cel.image = srcImg
+                pcall(function() cel.position = st.srcCel.position end)
+              end
+            elseif not st.existed then
               if cel then
                 pcall(function()
-                  sprite:deleteCel(processedLayer, sprite.frames[frameNumber])
+                  sprite:deleteCel(processedLayer, frameNumber)
                 end)
               end
             end
