@@ -2,7 +2,7 @@
   "name": "ai2pixel",
   "displayName": "ai2pixel — Grade-Nativa",
   "description": "Converte pseudo pixel art gerada por IA em pixel art autêntico 1:1 (grade nativa, paleta exata em OKLab, chroma-key com despill, limpeza de órfãos). Atua sobre o sprite ativo (frames = animação).",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": {
     "name": "Arena.ai Agent Mode + haminadablopes-arch"
   },

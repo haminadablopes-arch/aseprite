@@ -49,8 +49,21 @@ end
 
 -- ------------------------------------------------- leitura do sprite ativo
 local function readFrame(spr, frame, pal)
+  -- NOTE: nesta build do Aseprite o Frame NÃO expõe .cels. Caminhamos as
+  -- camadas de baixo para cima (em grupos, Layer.cels já traz os descendentes)
+  -- e pegamos o primeiro cel DO FRAME com imagem. A lista layer.cels é
+  -- esparsa (só cels existentes, em ordem de frame) → casar por frameNumber.
+  local fn = frame.frameNumber
   local cel
-  for _, c in ipairs(frame.cels) do if c.image then cel = c break end end
+  for _, layer in ipairs(spr.layers) do
+    for _, c in ipairs(layer.cels) do
+      if c.frameNumber == fn then
+        if c.image then cel = c end
+        break -- no máximo 1 cel por (camada, frame)
+      end
+    end
+    if cel then break end
+  end
   if not cel then return nil end
   local img = cel.image
   local w, h = img.width, img.height
@@ -592,9 +605,14 @@ dlg:button{ id = "ok", text = "Converter", onclick = function(ev)
   local fps = math.max(1, d.fps or 12)
 
   -- leitura + chroma
+  -- Paleta é por-frame na API: sprite.palettes[f] (1-based) — Sprite não tem
+  -- campo .palette. Só sprites Indexed têm lista de paletas (RGB/Gray: vazia).
+  local indexed = (spr.colorMode == ColorMode.INDEXED)
   local frames = {}
   for f = 1, #spr.frames do
-    local fr = readFrame(spr, spr.frames[f], spr.palette)
+    local pal
+    if indexed then pal = spr.palettes[f] end
+    local fr = readFrame(spr, spr.frames[f], pal)
     if fr then frames[#frames + 1] = fr end
   end
   if #frames == 0 then app.alert("ai2pixel: nenhum cel encontrado.") return end
@@ -649,7 +667,9 @@ dlg:button{ id = "ok", text = "Converter", onclick = function(ev)
       for x = 0, nw - 1 do
         local c = fin.px[y * nw + x + 1]
         if c and pA(c) > 0 then
-          img:setPixel(x, y, idxOf[pR(c) * 65536 + pG(c) * 256 + pB(c)] or 0)
+          -- putPixel(x, y, índice de paleta) — esta build expõe putPixel/drawPixel,
+          -- não setPixel
+          img:putPixel(x, y, idxOf[pR(c) * 65536 + pG(c) * 256 + pB(c)] or 0)
         end
       end
     end
