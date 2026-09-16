@@ -39,7 +39,8 @@ function M.run(cfg)
 
   -- preferências (é o que o diálogo usaria como valores iniciais)
   if cfg.opts then plugin.preferences.last = cfg.opts end
-  MOCK_NEXT_BUTTON = cfg.button or "remove"
+  MOCK_NEXT_BUTTON = cfg.button or "confirm"
+  if MOCK_NEXT_BUTTON == "remove" then MOCK_NEXT_BUTTON = "confirm" end
 
   dofile(cfg.extPath .. "/main.lua")
   init(plugin)

@@ -72,13 +72,13 @@ end
 -- Cel / Layer / Sprite
 --------------------------------------------------------------------------------
 local function makeCel(layer, frame, image)
-  local cel = { id = newId(), layer = layer, frameNumber = frame, _image = image }
+  local cel = { id = newId(), layer = layer, frameNumber = frame, _image = image, position = { x = 0, y = 0 } }
   function cel:image_get() return self._image end
   local mt = {
     __index = function(t, k)
       if k == "image" then return t._image end
       if k == "frame" then return { frameNumber = t.frameNumber } end
-      return nil
+      return rawget(t, k)
     end,
     __newindex = function(t, k, v)
       if k == "image" then
@@ -104,15 +104,21 @@ local function makeLayer(name, opts)
     isVisible = (opts.isVisible ~= false),
     isEditable = (opts.isEditable ~= false),
     isTilemap = (opts.isTilemap == true),
+    isBackground = false,
+    stackIndex = 0,
     layers = {},
     _cels = {},
   }
   function layer:cel(frame)
-    return self._cels[frame]
+    local fn = frame
+    if type(frame) == "table" and frame.frameNumber then fn = frame.frameNumber end
+    return self._cels[fn]
   end
   function layer:addCel(frame, image)
-    local cel = makeCel(self, frame, image)
-    self._cels[frame] = cel
+    local fn = frame
+    if type(frame) == "table" and frame.frameNumber then fn = frame.frameNumber end
+    local cel = makeCel(self, fn, image)
+    self._cels[fn] = cel
     return cel
   end
   return layer
@@ -133,6 +139,7 @@ local function makeSprite(w, h, opts)
   }
   function sprite:addLayer(name, o)
     local l = makeLayer(name, o)
+    l.stackIndex = #self.layers
     self.layers[#self.layers + 1] = l
     return l
   end
@@ -141,7 +148,26 @@ local function makeSprite(w, h, opts)
   end
   function sprite:newCel(layer, frame, image, pos)
     local fn = type(frame) == "table" and frame.frameNumber or frame
-    return layer:addCel(fn, image)
+    local cel = layer:addCel(fn, image)
+    if pos then cel.position = pos end
+    return cel
+  end
+  function sprite:deleteCel(layer, frame)
+    local fn = frame
+    if type(frame) == "table" and frame.frameNumber then fn = frame.frameNumber end
+    if type(fn) == "number" then
+      layer._cels[fn] = nil
+    end
+  end
+  function sprite:deleteLayer(layer)
+    for i, l in ipairs(self.layers) do
+      if l == layer then
+        table.remove(self.layers, i)
+        break
+      end
+    end
+    -- reindex stackIndex
+    for i, l in ipairs(self.layers) do l.stackIndex = i-1 end
   end
   function sprite:addFrame()
     local f = { frameNumber = #self.frames + 1 }
@@ -245,8 +271,8 @@ end
 function DialogMT:repaint() end
 function DialogMT:close() self._closed = true end
 function DialogMT:show(a)
-  -- simula o clique no botão pedido por MOCK_NEXT_BUTTON (padrão: "remove")
-  local btn = MOCK_NEXT_BUTTON or "remove"
+  -- simula o clique no botão pedido por MOCK_NEXT_BUTTON (padrão: "confirm")
+  local btn = MOCK_NEXT_BUTTON or "confirm"
   local found = false
   for _, w in ipairs(self.widgets) do
     if w.kind == "button" and w.id == btn then
