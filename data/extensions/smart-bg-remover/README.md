@@ -92,6 +92,6 @@ python3 test/harness.py --integration  # main.lua inteiro com Aseprite simulado
 python3 test/harness.py --real CAMINHO_DAS_IMAGENS   # suas imagens reais
 ```
 
-Cada caso gera em `test/out/` um tríptico `antes | depois | auditoria`, onde o
+Cada caso gera em `test/results/` um tríptico `antes | depois | auditoria`, onde o
 painel de auditoria mostra em verde o fundo removido corretamente, em vermelho
 o dano no sujeito e em amarelo o fundo que sobrou.

@@ -21,7 +21,7 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(os.path.dirname(HERE), "lib")
-OUT = os.path.join(HERE, "out")
+OUT = os.path.join(HERE, "results")
 
 # ------------------------------------------------------------------ runtime Lua
 _lua = None
