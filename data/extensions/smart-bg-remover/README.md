@@ -1,4 +1,4 @@
-# Removedor de Fundo Inteligente (Smart Background Remover) v0.6.0
+# Removedor de Fundo Inteligente (Smart Background Remover) v0.6.1
 
 Extensão do Aseprite que **reconhece o padrão do fundo** e remove esse fundo de **todos os frames selecionados** com **preview ao vivo no canvas** e reaproveitamento de layer.
 
@@ -12,7 +12,7 @@ Novo fluxo (v0.6.0):
 ## Como usar
 
 1. Selecione os frames na timeline (ou deixe só o frame atual ativo).
-2. Pressione **Ctrl+Shift+B** ou clique com botão direito sobre a seleção > **Fundo Inteligente** > **Preview Remoção de Fundo (Ctrl+Shift+B)**
+2. Pressione **Ctrl+Shift+B** ou clique com botão direito sobre a seleção > **Remover fundo (Ctrl+Shift+B)**
 3. No diálogo de preview, ajuste (tudo com atualização instantânea no canvas):
    - **Detecção**: Automático, Cor sólida, Padrão repetitivo, Gradiente, etc.
    - **Tolerância**: 0-128
@@ -24,10 +24,7 @@ Novo fluxo (v0.6.0):
 4. O resultado aparece **instantaneamente no canvas** no primeiro frame.
 5. Clique **Confirmar e aplicar a todos** para processar o resto dos frames. Ou **Cancelar** para desfazer o preview.
 
-O mesmo submenu aparece no menu de contexto dos **cels**.
-
-Outros comandos:
-- **Repetir última remoção**: repete com as opções salvas, sem abrir preview, reutilizando a layer ` - removido`.
+O mesmo item aparece no menu de contexto dos **cels** (v0.6.1: um único item direto no popup, sem submenu; o preview abre sempre com as opções salvas da última execução, então "Repetir última remoção" foi removido).
 
 ## O que ele reconhece
 

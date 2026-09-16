@@ -386,7 +386,7 @@ def integration(size=256, case_name="checker2x2"):
         "outputs": L.table_from(outputs),
         "selectedFrames": L.table_from([1, 2, 3]),
         "button": "remove",
-        "command": "SmartBgRemover",
+        "command": "SmartBgRemoverPreview",
         "opts": L.table_from({
             "modeLabel": "Automático",
             "scopeLabel": "Frames selecionados",

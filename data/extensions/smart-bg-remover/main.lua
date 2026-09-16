@@ -1,13 +1,16 @@
 --[[------------------------------------------------------------------------------
-  main.lua - Removedor de Fundo Inteligente (Smart Background Remover) v0.5.0
+  main.lua - Removedor de Fundo Inteligente (Smart Background Remover) v0.6.1
 
-  Novo fluxo (conforme solicitação):
+  Fluxo atual:
   - Só 2 layers: Original (oculta após processar) + "Original - removido" (reutilizada)
-  - Preview ao vivo no canvas do primeiro frame selecionado
-  - Parâmetros essenciais no preview: Detecção + Tolerância + Suavizar bordas + checkbox perFrame
-  - Após confirmar, aplica a todos os frames selecionados sem mostrar diálogo de relatório
-  - Atalho Ctrl+Shift+B abre direto o preview
-  - Undo único com Ctrl+Z
+  - Preview ao vivo no canvas de TODOS os frames selecionados (lote em parcelas
+    de ~50ms via Timer; arraste de slider reprocessa só o 1º frame)
+  - Todos os parâmetros no preview: Detecção, Tolerância, Suavizar bordas,
+    contíguo, ilhas, amostragem da borda (espessura + lados) e perFrame
+  - v0.6.1: menu simplificado - um único item "Remover fundo (Ctrl+Shift+B)"
+    direto no popup de frames/cels (sem submenu); "Repetir" removido
+  - Após confirmar, aplica a todos os frames selecionados sem diálogo de relatório
+  - Atalho Ctrl+Shift+B abre direto o preview; undo único com Ctrl+Z
 
   API usada:
   * plugin:newMenuGroup / newCommand
@@ -866,93 +869,42 @@ local function cmdPreview()
   showPreviewDialog()
 end
 
-local function cmdRepeat()
-  local sprite = app.activeSprite
-  if not sprite then
-    app.alert("Abra um sprite primeiro.")
-    return
-  end
-  local saved = (plugin and plugin.preferences and plugin.preferences.last)
-  if not saved then
-    showPreviewDialog()
-    return
-  end
-  local opts = currentOpts()
-  local targets, frames, layers, imageFrames = collectTargets(sprite, opts)
-  if #targets == 0 then
-    app.alert("Nenhum cel encontrado.")
-    return
-  end
-  -- aplica direto sem preview, sem diálogo, reutilizando layer
-  runFinalRemoval(sprite, targets, opts, nil, imageFrames)
-  saveOpts(opts)
-end
+-- (v0.6.1) o comando "Repetir última remoção" (cmdRepeat) foi removido:
+-- o preview abre com as opções salvas da última execução, então repetir
+-- já não justifica um item próprio no menu.
 
 --------------------------------------------------------------------------------
 -- init / exit
 --------------------------------------------------------------------------------
 
 function init(plugin)
-  -- submenu no menu de contexto dos FRAMES da timeline
-  plugin:newMenuGroup{
-    id = "smartbg_frame_menu",
-    title = "Fundo Inteligente",
-    group = "frame_popup_reverse",
-  }
+  -- v0.6.1: um único comando, direto no menu de contexto (sem submenu).
+  -- O comportamento é contextual: o comando lê a seleção da timeline
+  -- (frames ou cels) e age sobre ela. IDs preservados para manter o
+  -- keys.aseprite-keys (Ctrl+Shift+B) e atalhos customizados funcionando.
+
+  -- menu de contexto dos FRAMES da timeline
   plugin:newCommand{
     id = "SmartBgRemoverPreview",
-    title = "Preview Remoção de Fundo (Ctrl+Shift+B)",
-    group = "smartbg_frame_menu",
+    title = "Remover fundo (Ctrl+Shift+B)",
+    group = "frame_popup_reverse",
     onclick = cmdPreview,
     onenabled = hasSprite,
-  }
-  plugin:newCommand{
-    id = "SmartBgRemover",
-    title = "Remover fundo (preview)...",
-    group = "smartbg_frame_menu",
-    onclick = cmdPreview,
-    onenabled = hasSprite,
-  }
-  plugin:newCommand{
-    id = "SmartBgRemoverRepeat",
-    title = "Repetir última remoção",
-    group = "smartbg_frame_menu",
-    onclick = cmdRepeat,
-    onenabled = function() return hasSprite() and plugin.preferences.last ~= nil end,
   }
 
-  -- mesmo conjunto no menu de contexto dos CELS
-  plugin:newMenuGroup{
-    id = "smartbg_cel_menu",
-    title = "Fundo Inteligente",
-    group = "cel_popup_new",
-  }
+  -- menu de contexto dos CELS
   plugin:newCommand{
     id = "SmartBgRemoverCelPreview",
-    title = "Preview Remoção de Fundo (Ctrl+Shift+B)",
-    group = "smartbg_cel_menu",
+    title = "Remover fundo (Ctrl+Shift+B)",
+    group = "cel_popup_new",
     onclick = cmdPreview,
     onenabled = hasSprite,
-  }
-  plugin:newCommand{
-    id = "SmartBgRemoverCel",
-    title = "Remover fundo (preview)...",
-    group = "smartbg_cel_menu",
-    onclick = cmdPreview,
-    onenabled = hasSprite,
-  }
-  plugin:newCommand{
-    id = "SmartBgRemoverRepeatCel",
-    title = "Repetir última remoção",
-    group = "smartbg_cel_menu",
-    onclick = cmdRepeat,
-    onenabled = function() return hasSprite() and plugin.preferences.last ~= nil end,
   }
 
   -- comando global para atalho (aparece em Edit > Keyboard Shortcuts)
   plugin:newCommand{
     id = "SmartBgRemoverGlobalPreview",
-    title = "Fundo Inteligente: Preview Remoção",
+    title = "Remover fundo (Ctrl+Shift+B)",
     group = "edit_new",
     onclick = cmdPreview,
     onenabled = hasSprite,
