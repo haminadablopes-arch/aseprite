@@ -493,7 +493,21 @@ local function showDialog(opts, defaultAction)
   local out = {}
   for k, v in pairs(opts) do out[k] = v end
   for k, v in pairs(data) do
-    if k ~= "reve()
+    if k ~= "remove" and k ~= "analyze" and k ~= "cancel" then out[k] = v end
+  end
+  saveOpts(out)
+  return out, pressed
+end
+
+--------------------------------------------------------------------------------
+-- Comandos
+--------------------------------------------------------------------------------
+
+local function hasSprite()
+  return app.activeSprite ~= nil
+end
+
+local function cmdRemove()
   local opts = currentOpts()
   local res, action = showDialog(opts, "remove")
   if res then runRemoval(res, action == "analyze") end
@@ -557,22 +571,6 @@ function init(plugin)
     id = "SmartBgRemoverCel",
     title = "Remover fundo...",
     group = "smartbg_cel_menu",
-    onclick = cmdRemove,
-    onenabled = hasSprite,
-  }
-  plugin:newCommand {
-    id = "SmartBgRemoverAnalyzeCel",
-    title = "Analisar fundo (sem alterar)",
-    group = "smartbg_cel_menu",
-    onclick = cmdAnalyze,
-    onenabled = hasSprite,
-  }
-end
-
-function exit(plugin)
-  -- nada a limpar: os comandos/menus são removidos automaticamente
-end
-oup = "smartbg_cel_menu",
     onclick = cmdRemove,
     onenabled = hasSprite,
   }
