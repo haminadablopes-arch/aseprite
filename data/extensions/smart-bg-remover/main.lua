@@ -277,12 +277,31 @@ local function formatReport(reports, opts, elapsed)
 end
 
 local function showResult(title, text)
-  print(title .. "\n" .. text)
+  -- Análise (somente leitura): relatório no diálogo, sem print no console.
   local dlg = Dialog { title = title }
   dlg:label { text = text }
   dlg:newrow()
   dlg:button { id = "ok", text = "Fechar", focus = true }
   dlg:show()
+end
+
+-- Garante, por camada de origem, um backup (camada original renomeada) e
+-- uma camada de resultado onde só entram os frames efetivamente alterados.
+local function resultLayerFor(sprite, source, cache)
+  local rec = cache[source]
+  if rec then return rec.result end
+  local origName = source.name
+  if not origName:find("%(backup%)$") then
+    source.name = origName .. " (backup)"
+  else
+    origName = origName:gsub("%s*%(backup%)$", "")
+  end
+  local result = sprite:newLayer()
+  result.name = origName
+  result.isVisible = true
+  -- backup permanece visível por baixo nos frames sem cel de resultado
+  cache[source] = { result = result, origName = origName }
+  return result
 end
 
 local function runRemoval(opts, analyzeOnly)
@@ -319,6 +338,7 @@ local function runRemoval(opts, analyzeOnly)
   end
 
   local sharedModel, sharedCtx = nil, nil
+  local layerCache = {}
   local ok, err = pcall(function()
     local function job()
       for i, t in ipairs(targets) do
@@ -360,6 +380,7 @@ local function runRemoval(opts, analyzeOnly)
           rep.elapsed = r.elapsed
         else
           local newBytes, r = bgcore.processWithModel(img.bytes, ctx, model, algo)
+          -- backup da origem + cel de resultado só se o frame mudou de fato
           if newBytes and (r.removed or 0) > 0 then
             local newImg = Image(img.spec)
             local bytes = newBytes
@@ -367,7 +388,16 @@ local function runRemoval(opts, analyzeOnly)
               bytes = bgcore.restride(newBytes, ctx, newImg.rowStride)
             end
             newImg.bytes = bytes
-            t.cel.image = newImg      -- cmd::ReplaceImage -> desfazível
+            local dest = resultLayerFor(sprite, t.layer, layerCache)
+            local pos = t.cel.position
+            if sprite.newCel then
+              sprite:newCel(dest, t.frame, newImg, pos)
+            elseif dest.addCel then
+              dest:addCel(t.frame, newImg)
+            else
+              -- fallback: substitui no próprio cel (API incompleta)
+              t.cel.image = newImg
+            end
           end
           rep.removed, rep.total, rep.percent = r.removed or 0, r.total or 0, r.percent or 0
           rep.warnings = r.warnings
@@ -463,21 +493,7 @@ local function showDialog(opts, defaultAction)
   local out = {}
   for k, v in pairs(opts) do out[k] = v end
   for k, v in pairs(data) do
-    if k ~= "remove" and k ~= "analyze" and k ~= "cancel" then out[k] = v end
-  end
-  saveOpts(out)
-  return out, pressed
-end
-
---------------------------------------------------------------------------------
--- Comandos
---------------------------------------------------------------------------------
-
-local function hasSprite()
-  return app.activeSprite ~= nil
-end
-
-local function cmdRemove()
+    if k ~= "reve()
   local opts = currentOpts()
   local res, action = showDialog(opts, "remove")
   if res then runRemoval(res, action == "analyze") end
@@ -541,6 +557,22 @@ function init(plugin)
     id = "SmartBgRemoverCel",
     title = "Remover fundo...",
     group = "smartbg_cel_menu",
+    onclick = cmdRemove,
+    onenabled = hasSprite,
+  }
+  plugin:newCommand {
+    id = "SmartBgRemoverAnalyzeCel",
+    title = "Analisar fundo (sem alterar)",
+    group = "smartbg_cel_menu",
+    onclick = cmdAnalyze,
+    onenabled = hasSprite,
+  }
+end
+
+function exit(plugin)
+  -- nada a limpar: os comandos/menus são removidos automaticamente
+end
+oup = "smartbg_cel_menu",
     onclick = cmdRemove,
     onenabled = hasSprite,
   }
