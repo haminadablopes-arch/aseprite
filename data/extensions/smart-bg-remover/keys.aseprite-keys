@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<keyboard version="1">
+  <commands>
+    <key command="SmartBgRemoverPreview" shortcut="Ctrl+Shift+B" />
+    <key command="SmartBgRemoverCelPreview" shortcut="Ctrl+Shift+B" />
+    <key command="SmartBgRemoverGlobalPreview" shortcut="Ctrl+Shift+B" />
+  </commands>
+</keyboard>
