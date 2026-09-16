@@ -1,10 +1,11 @@
-# Removedor de Fundo Inteligente (Smart Background Remover) v0.5.0
+# Removedor de Fundo Inteligente (Smart Background Remover) v0.6.0
 
 Extensão do Aseprite que **reconhece o padrão do fundo** e remove esse fundo de **todos os frames selecionados** com **preview ao vivo no canvas** e reaproveitamento de layer.
 
-Novo fluxo (v0.5.0):
+Novo fluxo (v0.6.0):
 - Só 2 layers: `Original` (oculta após processar) + `Original - removido` (sempre sobrescrita, nunca cria nova a cada vez)
-- **Preview ao vivo no próprio canvas**: ao abrir (Ctrl+Shift+B), o primeiro frame selecionado é processado e mostra instantaneamente no canvas enquanto você mexe nos sliders
+- **Preview ao vivo no próprio canvas de TODOS os frames selecionados**: ao abrir (Ctrl+Shift+B), todos os frames do escopo são processados e o resultado aparece no canvas — aperte **play** (ou o botão ▶ do diálogo) para conferir a animação inteira antes de confirmar
+- **Sem travar**: durante o arraste dos sliders só o 1º frame é reprocessado (instantâneo); ao soltar (onrelease) o lote inteiro é atualizado em parcelas de ~50ms via Timer, mantendo a UI responsiva
 - Após confirmar, aplica a todos os frames selecionados **sem diálogo de relatório** (apenas oculta a original e mostra a processada, desfaz com Ctrl+Z)
 - Atalho **Ctrl+Shift+B** abre direto o modo preview
 
@@ -42,7 +43,28 @@ O núcleo (`lib/bgcore.lua`) amostra a borda e classifica em:
 
 ## Opções salvas
 
-Tolerância, suavização, modo, etc. ficam salvas em `preferences.lua`. No preview mostramos só os essenciais para teste rápido, mas as opções avançadas (contíguo, ilhas, espessura da borda, lados) continuam salvas e usadas no processamento final.
+Tolerância, suavização, modo, etc. ficam salvas em `preferences.lua`. Desde a v0.5.1, **todos** os parâmetros (contíguo, ilhas, espessura da borda e lados) aparecem no preview e qualquer mudança atualiza o canvas imediatamente; ao confirmar, tudo é salvo e reutilizado pelo "Repetir última remoção".
+
+## Preview de todos os frames e desempenho
+
+Custo medido por frame (Lua 5.5, borda xadrez + assunto):
+
+| Tamanho | analyze | process | total/frame |
+|---|---|---|---|
+| 64×64 | ~1,6ms | ~0,8ms | ~2,4ms |
+| 256×256 | ~7ms | ~6ms | ~13ms |
+| 512×512 | ~16ms | ~23ms | ~39ms |
+| 1024×1024 | ~41ms | ~88ms | ~128ms |
+| 2048×2048 | ~102ms | ~320ms | ~422ms |
+
+Para manter a UI fluida:
+
+- **Arraste de slider** → reprocessa só o 1º frame (resposta imediata).
+- **Soltar o slider (onrelease), checkboxes e combobox** → atualiza o lote inteiro em parcelas de ~50ms (Timer), com progresso no status ("Atualizando previews... 3/10 frames"). Entre uma parcela e outra o Aseprite respira (redesenha, responde a cliques).
+- **"Detectar fundo em cada frame ao confirmar" desligado** → o modelo do 1º frame é analisado uma única vez e reutilizado nos demais frames (economiza o analyze de cada um).
+- **Cels vinculados** (frames que compartilham a mesma imagem) → processados uma única vez e propagados para todos os frames que os usam, na preview e na confirmação.
+- **Cancelar** → restaura o conteúdo pré-preview de todos os cels tocados (ou remove os que foram criados só para a preview).
+- O botão **▶ Reproduzir animação** roda o play do Aseprite com os previews aplicados; a própria reprodução não custa nada além do desenho normal (os cels já estão processados).
 
 ## Camadas
 

@@ -262,12 +262,15 @@ local function collectTargets(sprite, opts)
   local layers = imageLayers(sprite, which)
 
   local targets, seen = {}, {}
+  local imageFrames = {} -- id da imagem -> todos os cels que a usam (frames vinculados)
   for _, f in ipairs(frames) do
     for _, l in ipairs(layers) do
       if l.isEditable and not l.isTilemap and not isProcessedLayer(l) and not isBackupLayer(l) then
         local cel = l:cel(f)
         if cel and cel.image then
           local id = cel.image.id
+          imageFrames[id] = imageFrames[id] or {}
+          imageFrames[id][#imageFrames[id] + 1] = { frame = f, layer = l, cel = cel }
           if not seen[id] then
             seen[id] = true
             targets[#targets + 1] = {
@@ -283,14 +286,14 @@ local function collectTargets(sprite, opts)
   end
   -- ordena por frame para pegar o primeiro
   table.sort(targets, function(a,b) return a.frame < b.frame end)
-  return targets, frames, layers
+  return targets, frames, layers, imageFrames
 end
 
 --------------------------------------------------------------------------------
 -- Processamento final (sem diálogo de relatório)
 --------------------------------------------------------------------------------
 
-local function runFinalRemoval(sprite, targets, opts, sharedModelForFirst)
+local function runFinalRemoval(sprite, targets, opts, sharedModelForFirst, imageFrames)
   local algo = toAlgoOpts(opts)
   local sharedModel = nil
   if not opts.perFrame then
@@ -368,7 +371,7 @@ local function showPreviewDialog()
   end
 
   local initialOpts = currentOpts()
-  local targets, frames, layers = collectTargets(sprite, initialOpts)
+  local targets, frames, layers, imageFrames = collectTargets(sprite, initialOpts)
   if #targets == 0 then
     app.alert("Nenhum cel encontrado para o escopo escolhido.\nDica: selecione os frames na timeline antes de usar o comando.")
     return
@@ -383,19 +386,58 @@ local function showPreviewDialog()
   local processedLayer = findProcessedLayer(sprite, sourceLayer)
   local createdNewLayer = (processedLayer == nil)
   local originalProcessedVisible = nil
-  local originalProcessedCelBytes = nil
-  local originalProcessedCelSpec = nil
-  local originalProcessedCelPosition = nil
-  local hadOriginalCel = false
-
   if processedLayer then
     originalProcessedVisible = processedLayer.isVisible
-    local cel = processedLayer:cel(firstTarget.frame)
+  end
+
+  -- estado pré-preview de CADA cel que for tocado (para restaurar tudo no cancel)
+  local previewCels = {}
+  local function recordPreviewCel(frameNumber)
+    if previewCels[frameNumber] then return end
+    local cel = processedLayer and processedLayer:cel(frameNumber)
     if cel and cel.image then
-      hadOriginalCel = true
-      originalProcessedCelBytes = cel.image.bytes
-      originalProcessedCelSpec = cel.image.spec
-      originalProcessedCelPosition = cel.position
+      previewCels[frameNumber] = { existed = true, bytes = cel.image.bytes,
+                                   spec = cel.image.spec, position = cel.position }
+    else
+      previewCels[frameNumber] = { existed = false }
+    end
+  end
+
+  -- escreve a imagem de preview num frame da layer processada (transação só como fallback)
+  local function writePreviewCel(frameNumber, posSrc, newImg)
+    recordPreviewCel(frameNumber)
+    local ok = pcall(function()
+      local cel = processedLayer:cel(frameNumber)
+      if cel then
+        cel.image = newImg
+      else
+        sprite:newCel(processedLayer, frameNumber, newImg, posSrc)
+      end
+    end)
+    if not ok then
+      pcall(function()
+        app.transaction("Preview Fundo", function()
+          local cel = processedLayer:cel(frameNumber)
+          if cel then
+            cel.image = newImg
+          else
+            sprite:newCel(processedLayer, frameNumber, newImg, posSrc)
+          end
+        end)
+      end)
+    end
+  end
+
+  -- aplica no frame do alvo + propaga para cels vinculados (mesma imagem)
+  local function applyPreviewImage(t, newImg)
+    writePreviewCel(t.frame, t.cel.position, newImg)
+    local list = imageFrames and imageFrames[t.cel.image.id]
+    if list then
+      for _, e in ipairs(list) do
+        if e.layer == t.layer and e.frame ~= t.frame then
+          writePreviewCel(e.frame, e.cel.position, newImg)
+        end
+      end
     end
   end
 
@@ -404,6 +446,10 @@ local function showPreviewDialog()
     app.transaction("Preparar Preview Fundo", function()
       if not processedLayer then
         processedLayer = getOrCreateProcessedLayer(sprite, sourceLayer)
+      end
+      -- registra o estado pré-preview de todos os alvos (antes de criar placeholders)
+      for _, t in ipairs(targets) do
+        recordPreviewCel(t.frame)
       end
       -- garante que tem cel no primeiro frame (copia original como placeholder)
       local existing = processedLayer:cel(firstTarget.frame)
@@ -425,9 +471,11 @@ local function showPreviewDialog()
   preparePreviewTx()
   app.refresh()
 
-  -- estado compartilhado para finalização
-  local sharedModelForConfirm = nil
+  -- estado do preview
   local lastPreviewOpts = nil
+  local dialogOpen = true
+  local batchGen = 0      -- geração do lote (muda a cada updateAllPreviews)
+  local batchTimer = nil  -- Timer ativo do lote (se a API tiver Timer)
 
   local dlg = Dialog{ title = "Preview Remoção de Fundo (Ctrl+Shift+B)" }
 
@@ -450,59 +498,46 @@ local function showPreviewDialog()
     return o
   end
 
+  -- calcula modelo + bytes processados de um alvo.
+  -- quando perFrame está desligado, reutiliza o modelo do 1º frame (shared.m)
+  local function computeTarget(t, curOpts, algo, shared)
+    local img = t.cel.image
+    local ctx = ctxFor(img, sprite)
+    local model
+    if not curOpts.perFrame then
+      if not shared.m then shared.m = bgcore.analyze(img.bytes, ctx, algo) end
+      model = shared.m
+    else
+      model = bgcore.analyze(img.bytes, ctx, algo)
+    end
+    local newBytes, rep = bgcore.processWithModel(img.bytes, ctx, model, algo)
+    return img, ctx, model, newBytes, rep
+  end
+
+  local function toPreviewImage(img, ctx, newBytes)
+    local newImg = Image(img.spec)
+    local bytes = newBytes
+    if newImg.rowStride ~= ctx.stride then
+      bytes = bgcore.restride(newBytes, ctx, newImg.rowStride)
+    end
+    newImg.bytes = bytes
+    return newImg
+  end
+
+  -- preview instantâneo: só o primeiro frame (barato, responde durante o arraste)
   local function updatePreview()
     local curOpts = getDlgOpts()
     lastPreviewOpts = curOpts
     local algo = toAlgoOpts(curOpts)
 
-    local img = firstTarget.cel.image
-    local ctx = ctxFor(img, sprite)
-
-    local ok, model, newBytes, rep = pcall(function()
-      local m = bgcore.analyze(img.bytes, ctx, algo)
-      local nb, r = bgcore.processWithModel(img.bytes, ctx, m, algo)
-      return m, nb, r
-    end)
-
+    local ok, img, ctx, model, newBytes, rep = pcall(computeTarget, firstTarget, curOpts, algo, {})
     if not ok then
-      dlg:modify{ id = "status", text = "Erro no preview: " .. tostring(model) }
+      dlg:modify{ id = "status", text = "Erro no preview: " .. tostring(img) }
       return
     end
 
-    sharedModelForConfirm = model
-
     if newBytes then
-      local newImg = Image(img.spec)
-      local bytes = newBytes
-      if newImg.rowStride ~= ctx.stride then
-        bytes = bgcore.restride(newBytes, ctx, newImg.rowStride)
-      end
-      newImg.bytes = bytes
-
-      -- atualiza cel da layer processada diretamente (sem nova transaction para ser instantâneo)
-      -- mas dentro de pcall para não quebrar se API exigir transaction
-      local ok2, err2 = pcall(function()
-        local cel = processedLayer:cel(firstTarget.frame)
-        if cel then
-          cel.image = newImg
-        else
-          sprite:newCel(processedLayer, firstTarget.frame, newImg, firstTarget.cel.position)
-        end
-      end)
-      if not ok2 then
-        -- fallback: tenta dentro de transaction rápida
-        pcall(function()
-          app.transaction("Preview Fundo", function()
-            local cel = processedLayer:cel(firstTarget.frame)
-            if cel then
-              cel.image = newImg
-            else
-              sprite:newCel(processedLayer, firstTarget.frame, newImg, firstTarget.cel.position)
-            end
-          end)
-        end)
-      end
-
+      applyPreviewImage(firstTarget, toPreviewImage(img, ctx, newBytes))
       local pct = rep and rep.percent or 0
       dlg:modify{ id = "status", text = string.format("Preview frame %d: %s - %.1f%% removido - %d/%d frames selecionados", firstTarget.frame, model.type, pct, #targets, #frames) }
     else
@@ -513,13 +548,102 @@ local function showPreviewDialog()
     dlg:repaint()
   end
 
-  -- widgets com onchange para preview instantâneo no canvas
+  -- preview completo: processa TODOS os frames selecionados em parcelas (~50ms),
+  -- devolvendo controle à UI entre uma parcela e outra (Timer) para não travar
+  local function updateAllPreviews()
+    batchGen = batchGen + 1
+    local gen = batchGen
+    local curOpts = getDlgOpts()
+    lastPreviewOpts = curOpts
+    local algo = toAlgoOpts(curOpts)
+    local shared = {}
+    local total = #targets
+    local i = 1
+    local t0 = os.clock()
+    local firstType, firstPct = nil, 0
+
+    local function stopBatchTimer()
+      if batchTimer then
+        local t = batchTimer
+        batchTimer = nil
+        pcall(function() t:stop() end)
+      end
+    end
+
+    local function finish(msg)
+      stopBatchTimer()
+      dlg:modify{ id = "status", text = msg }
+      if app.refresh then app.refresh() end
+      dlg:repaint()
+    end
+
+    local function step()
+      if gen ~= batchGen or not dialogOpen then return end
+      while i <= total do
+        local t = targets[i]
+        local ok, img, ctx, model, newBytes, rep = pcall(computeTarget, t, curOpts, algo, shared)
+        if not ok then
+          finish("Erro no preview: " .. tostring(img))
+          return
+        end
+        if newBytes then
+          applyPreviewImage(t, toPreviewImage(img, ctx, newBytes))
+        else
+          -- nada detectado: mostra o próprio original (evita frame vazio na animação)
+          local copyImg = Image(img.spec)
+          copyImg.bytes = img.bytes
+          applyPreviewImage(t, copyImg)
+        end
+        if i == 1 then
+          firstType = model.type
+          firstPct = (rep and rep.percent) or 0
+        end
+        i = i + 1
+        if i <= total then
+          dlg:modify{ id = "status", text = string.format("Atualizando previews... %d/%d frames", i - 1, total) }
+        end
+        -- em modo Timer, devolve o controle à UI a cada ~50ms;
+        -- sem Timer (mock/testes), processa tudo de uma vez
+        if batchTimer and (os.clock() - t0) > 0.05 then
+          return
+        end
+      end
+      finish(string.format("Previews: %d/%d frames - %s - %.1f%% no frame %d%s",
+        total, total, firstType or "?", firstPct, firstTarget.frame,
+        curOpts.perFrame and "" or " (modelo compartilhado)"))
+    end
+
+    stopBatchTimer()
+    if Timer then
+      local okT = pcall(function()
+        local tmr
+        tmr = Timer{ interval = 0.01, ontick = function()
+          if gen ~= batchGen or not dialogOpen then
+            pcall(function() tmr:stop() end)
+            return
+          end
+          step()
+        end }
+        batchTimer = tmr
+        tmr:start()
+      end)
+      if not okT then
+        batchTimer = nil
+        step()
+      end
+    else
+      step()
+    end
+  end
+
+  -- widgets: sliders atualizam o 1º frame durante o arraste (onchange) e o lote
+  -- completo ao soltar (onrelease); checkboxes/combobox disparam o lote completo
   dlg:combobox{
     id = "modeLabel",
     label = "Detecção:",
     options = MODE_LABELS,
     option = initialOpts.modeLabel,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
   dlg:slider{
     id = "tolerance",
@@ -527,6 +651,7 @@ local function showPreviewDialog()
     min = 0, max = 128,
     value = initialOpts.tolerance,
     onchange = updatePreview,
+    onrelease = updateAllPreviews,
   }
   dlg:slider{
     id = "soft",
@@ -534,18 +659,19 @@ local function showPreviewDialog()
     min = 0, max = 64,
     value = initialOpts.soft,
     onchange = updatePreview,
+    onrelease = updateAllPreviews,
   }
   dlg:check{
     id = "contiguous",
     text = "Apagar somente áreas conectadas às bordas",
     selected = initialOpts.contiguous,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
   dlg:check{
     id = "removeIslands",
     text = "Apagar também ilhas internas",
     selected = initialOpts.removeIslands,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
   dlg:separator{ text = "Amostragem da borda" }
   dlg:slider{
@@ -554,56 +680,76 @@ local function showPreviewDialog()
     min = 1, max = 32,
     value = initialOpts.sample,
     onchange = updatePreview,
+    onrelease = updateAllPreviews,
   }
   dlg:check{
     id = "sideTop",
     text = "Topo",
     selected = initialOpts.sideTop,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
   dlg:check{
     id = "sideBottom",
     text = "Base",
     selected = initialOpts.sideBottom,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
   dlg:check{
     id = "sideLeft",
     text = "Esquerda",
     selected = initialOpts.sideLeft,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
   dlg:check{
     id = "sideRight",
     text = "Direita",
     selected = initialOpts.sideRight,
-    onchange = updatePreview,
+    onchange = updateAllPreviews,
   }
-  -- perFrame só afeta a confirmação final (re-análise por frame), sem preview instantâneo
+  -- perFrame: afeta o preview (modelo compartilhado vs por frame) e a confirmação final
   dlg:check{
     id = "perFrame",
     text = "Detectar fundo em cada frame ao confirmar",
     selected = initialOpts.perFrame,
+    onchange = updateAllPreviews,
   }
   dlg:separator{ text = "Preview ao vivo no canvas" }
-  dlg:label{ id = "status", text = "Processando preview do frame " .. firstTarget.frame .. "..." }
+  dlg:label{ id = "status", text = "Processando preview de " .. #targets .. " frame(s)..." }
   dlg:separator()
+  dlg:button{ id = "play", text = "▶ Reproduzir animação", onclick = function()
+    pcall(function() app.command.PlayAnimation() end)
+  end }
   dlg:button{ id = "confirm", text = "Confirmar e aplicar a todos", focus = true }
   dlg:button{ id = "cancel", text = "Cancelar" }
 
-  -- primeiro preview
-  updatePreview()
+  -- primeiro preview: 1º frame + lote completo (em parcelas, se houver Timer)
+  updateAllPreviews()
 
   dlg:show()
+
+  dialogOpen = false
+  if batchTimer then
+    local t = batchTimer
+    batchTimer = nil
+    pcall(function() t:stop() end)
+  end
 
   local data = dlg.data
   if data.confirm then
     local finalOpts = lastPreviewOpts or getDlgOpts()
     saveOpts(finalOpts)
+    -- modelo compartilhado re-analisado do 1º frame com as opções finais
+    -- (garante consistência mesmo se um lote ainda estivesse pendente)
+    local sharedModel = nil
+    if not finalOpts.perFrame then
+      local img = firstTarget.cel.image
+      local ctx = ctxFor(img, sprite)
+      pcall(function() sharedModel = bgcore.analyze(img.bytes, ctx, toAlgoOpts(finalOpts)) end)
+    end
     -- aplica a todos
-    runFinalRemoval(sprite, targets, finalOpts, sharedModelForConfirm)
+    runFinalRemoval(sprite, targets, finalOpts, sharedModel, imageFrames)
   else
-    -- cancelar: restaura estado original
+    -- cancelar: restaura o estado pré-preview de TODOS os cels tocados
     app.transaction("Cancelar preview fundo", function()
       -- restaura visibilidade original
       if sourceLayer then
@@ -627,25 +773,28 @@ local function showPreviewDialog()
         end
       else
         if processedLayer then
-          if originalProcessedVisible ~= nil then
-            processedLayer.isVisible = originalProcessedVisible
-          end
-          local cel = processedLayer:cel(firstTarget.frame)
-          if hadOriginalCel and originalProcessedCelBytes and originalProcessedCelSpec then
-            if cel then
-              local restoreImg = Image(originalProcessedCelSpec)
-              restoreImg.bytes = originalProcessedCelBytes
-              cel.image = restoreImg
-              if originalProcessedCelPosition then
-                -- posição já está, mas tenta restaurar
-                pcall(function() cel.position = originalProcessedCelPosition end)
+          -- restaura cada cel tocado: existed => bytes originais; senão remove
+          for frameNumber, st in pairs(previewCels) do
+            local cel = processedLayer:cel(frameNumber)
+            if st.existed then
+              if cel then
+                local restoreImg = Image(st.spec)
+                restoreImg.bytes = st.bytes
+                cel.image = restoreImg
+                if st.position then
+                  pcall(function() cel.position = st.position end)
+                end
+              end
+            else
+              if cel then
+                pcall(function()
+                  sprite:deleteCel(processedLayer, sprite.frames[frameNumber])
+                end)
               end
             end
-          else
-            -- não tinha cel antes, remove o que foi criado para preview
-            if cel then
-              sprite:deleteCel(processedLayer, sprite.frames[firstTarget.frame])
-            end
+          end
+          if originalProcessedVisible ~= nil then
+            processedLayer.isVisible = originalProcessedVisible
           end
         end
       end
@@ -678,16 +827,13 @@ local function cmdRepeat()
     return
   end
   local opts = currentOpts()
-  local targets = (function()
-    local t = collectTargets(sprite, opts)
-    return t
-  end)()
+  local targets, frames, layers, imageFrames = collectTargets(sprite, opts)
   if #targets == 0 then
     app.alert("Nenhum cel encontrado.")
     return
   end
   -- aplica direto sem preview, sem diálogo, reutilizando layer
-  runFinalRemoval(sprite, targets, opts, nil)
+  runFinalRemoval(sprite, targets, opts, nil, imageFrames)
   saveOpts(opts)
 end
 
