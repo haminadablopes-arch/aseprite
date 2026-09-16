@@ -2,7 +2,10 @@
 
 Extensão do Aseprite que **reconhece o padrão do fundo** de uma imagem e remove
 esse fundo de **todos os frames selecionados na timeline** de uma vez, dentro de
-uma única transação (um `Ctrl+Z` desfaz tudo).
+uma única transação (um `Ctrl+Z` desfaz tudo). A camada original é preservada
+como backup (renomeada com o sufixo `(backup)`); o resultado vai para uma
+camada nova, **somente nos frames que de fato tiveram pixels apagados**. Não
+há diálogo nem console de conclusão após a remoção.
 
 ## Como usar
 

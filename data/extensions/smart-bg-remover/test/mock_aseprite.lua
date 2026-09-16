@@ -136,6 +136,13 @@ local function makeSprite(w, h, opts)
     self.layers[#self.layers + 1] = l
     return l
   end
+  function sprite:newLayer()
+    return self:addLayer("Layer")
+  end
+  function sprite:newCel(layer, frame, image, pos)
+    local fn = type(frame) == "table" and frame.frameNumber or frame
+    return layer:addCel(fn, image)
+  end
   function sprite:addFrame()
     local f = { frameNumber = #self.frames + 1 }
     self.frames[#self.frames + 1] = f

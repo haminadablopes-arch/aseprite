@@ -87,10 +87,16 @@ function M.run(cfg)
     return { ok = false, error = tostring(err), log = MOCK_LOG }
   end
 
-  -- grava os frames resultantes
+  -- grava os frames resultantes (camada de resultado, se existir; senão a original)
+  local resultLayer = layer
+  for _, l in ipairs(sprite.layers) do
+    if l ~= layer and l.isImage then
+      resultLayer = l
+    end
+  end
   local out = {}
   for i, f in ipairs(sprite.frames) do
-    local cel = layer:cel(f.frameNumber)
+    local cel = resultLayer:cel(f.frameNumber) or layer:cel(f.frameNumber)
     local path = cfg.outputs[i]
     writeBin(path, cel.image.width, cel.image.height, cel.image.bytes)
     out[i] = path
