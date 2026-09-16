@@ -1,23 +1,23 @@
 --[[------------------------------------------------------------------------------
-  bgcore.lua - Núcleo do "Removedor de Fundo Inteligente" (Smart Background Remover)
+  bgcore.lua - Core of the "Smart Background Remover"
 
-  Este módulo é PURO: não usa nenhuma API do Aseprite. Ele trabalha somente com
-  strings de bytes (o mesmo formato de Image.bytes / Image:getPixel() do Aseprite),
-  o que permite testá-lo e auditá-lo fora do Aseprite (ver pasta test/).
+  This module is PURE: it uses no Aseprite API. It works only with byte
+  strings (the same format as Aseprite's Image.bytes / Image:getPixel()),
+  which allows testing and auditing it outside Aseprite (see test/ folder).
 
-  Formato esperado dos pixels (little endian, igual ao Aseprite):
+  Expected pixel format (little endian, same as Aseprite):
     bpp=4 (RGB)      : R, G, B, A
     bpp=2 (GRAY)     : V, A
-    bpp=1 (INDEXED)  : índice da paleta
+    bpp=1 (INDEXED)  : palette index
 
-  Fluxo:
-    1) analyze()      -> descobre o "modelo" do fundo amostrando as bordas
-    2) computeFlags() -> classifica cada pixel do frame (fundo candidato / sujeito)
-    3) connectivity() -> (opcional) mantém só o que está conectado às bordas e
-                         separa "ilhas" internas de fundo
-    4) applyMask()    -> devolve os novos bytes do frame com o fundo apagado
+  Pipeline:
+    1) analyze()      -> discovers the background "model" by sampling borders
+    2) computeFlags() -> classifies each frame pixel (background candidate / subject)
+    3) connectivity() -> (optional) keeps only what is connected to the borders and
+                         separates internal background "islands"
+    4) applyMask()    -> returns the new frame bytes with the background erased
 
-  Copyright (c) 2026 - Licença MIT
+  Copyright (c) 2026 - MIT License
 ------------------------------------------------------------------------------]]
 
 local M = { version = "0.4.0" }
@@ -30,7 +30,7 @@ local floor, ceil, max, min, sqrt, abs, huge =
 local clock = os.clock
 
 --------------------------------------------------------------------------------
--- Opções padrão
+-- Default options
 --------------------------------------------------------------------------------
 
 local function defaultOpts(o)
@@ -43,12 +43,12 @@ local function defaultOpts(o)
   end
   return {
     mode           = o.mode or "auto",   -- auto | flat | set | tile | gradient | flood
-    tolerance      = o.tolerance or 24,  -- distância euclidiana RGBA (0..255)
+    tolerance      = o.tolerance or 24,  -- RGBA euclidean distance (0..255)
     contiguous     = (o.contiguous == nil) and true or o.contiguous,
     removeIslands  = o.removeIslands or false,
-    sample         = o.sample or 6,      -- espessura da faixa de borda amostrada
+    sample         = o.sample or 6,      -- thickness of the sampled border band
     sides          = sides,
-    soft           = o.soft or 0,        -- raio de suavização das bordas (0 = desligado)
+    soft           = o.soft or 0,        -- edge softening radius (0 = off)
     maxColors      = o.maxColors or 12,
     maxRuns        = o.maxRuns or 400000,
     minShare       = o.minShare or 0.004,
@@ -58,7 +58,7 @@ end
 M.defaultOpts = defaultOpts
 
 --------------------------------------------------------------------------------
--- Cores
+-- Colors
 --------------------------------------------------------------------------------
 
 -- Extrai r,g,b,a de uma "chave" (pixel cru de bpp bytes).
@@ -93,11 +93,11 @@ end
 M.keyToHex = keyToHex
 
 --------------------------------------------------------------------------------
--- Amostragem da borda
+-- Border sampling
 --------------------------------------------------------------------------------
 
--- Devolve, para cada linha y (0-based), as faixas [x1,x2] (0-based, inclusivo)
--- que pertencem à borda amostrada.
+-- Returns, for each row y (0-based), the [x1,x2] ranges (0-based, inclusive)
+-- that belong to the sampled border.
 local function borderRanges(w, h, sample, sides)
   local ranges = {}
   for y = 0, h - 1 do
@@ -123,7 +123,7 @@ local function borderRanges(w, h, sample, sides)
   return ranges
 end
 
--- Conta as cores da borda. Devolve histograma (chave->contagem) e total.
+-- Counts border colors. Returns a histogram (key->count) and the total.
 local function histogram(bytes, ctx, ranges, bpp, width, stride)
   local hist, total = {}, 0
   for y = 0, ctx.h - 1 do
@@ -147,7 +147,7 @@ local function histogram(bytes, ctx, ranges, bpp, width, stride)
 end
 
 --------------------------------------------------------------------------------
--- Ajuste de gradiente (mínimos quadrados, coords normalizadas u,v em [0,1])
+-- Gradient fit (least squares, normalized u,v coords in [0,1])
 --------------------------------------------------------------------------------
 
 local function solve3(m, rhs)
@@ -158,7 +158,7 @@ local function solve3(m, rhs)
     { m[3][1], m[3][2], m[3][3], rhs[3] },
   }
   for col = 1, 3 do
-    -- pivô
+    -- pivot
     local piv, pivr = abs(a[col][col]), col
     for r = col + 1, 3 do
       if abs(a[r][col]) > piv then piv, pivr = abs(a[r][col]), r end
@@ -179,14 +179,14 @@ local function solve3(m, rhs)
 end
 
 --------------------------------------------------------------------------------
--- Detecção de padrão em tile (xadrez, listras, tramas periódicas)
+-- Tile pattern detection (checker, stripes, periodic weaves)
 --------------------------------------------------------------------------------
 
 local TILE_SIZES = { { 1, 1 }, { 2, 1 }, { 1, 2 }, { 2, 2 }, { 4, 4 }, { 8, 8 }, { 16, 16 } }
 
--- Para cada fase (x%P, y%Q) descobre a cor modal na borda.
--- Devolve (score, map) onde score é a fração de pixels da borda que casam
--- exatamente com a cor prevista pelo tile.
+-- For each phase (x%P, y%Q) finds the modal color on the border.
+-- Returns (score, map) where score is the fraction of border pixels that match
+-- exactly the color predicted by the tile.
 local function evalTile(bytes, ctx, ranges, P, Q, bpp, width, stride)
   local acc, total = {}, 0
   local function phase(x, y) return ((y % Q) * P + (x % P)) end
@@ -226,7 +226,7 @@ local function evalTile(bytes, ctx, ranges, P, Q, bpp, width, stride)
 end
 
 --------------------------------------------------------------------------------
--- analyze(): descobre o modelo do fundo
+-- analyze(): discovers the background model
 --------------------------------------------------------------------------------
 
 function M.analyze(bytes, ctx, opts)
@@ -250,17 +250,17 @@ function M.analyze(bytes, ctx, opts)
 
   if total == 0 then
     model.type = "empty"
-    model.description = "Nenhum pixel de borda disponível para amostragem."
+    model.description = "No border pixels available for sampling."
     model.elapsed = clock() - t0
     return model
   end
 
-  -- lista de cores ordenadas por frequência
+  -- color list sorted by frequency
   local list = {}
   for k, c in pairs(hist) do list[#list + 1] = { key = k, count = c } end
   sort(list, function(a, b) return a.count > b.count end)
 
-  -- estatísticas de transparência na borda
+  -- transparency stats on the border
   local alphaZero = 0
   for i = 1, #list do
     local _, _, _, a = unpackKey(list[i].key, bpp, pal)
@@ -289,7 +289,7 @@ function M.analyze(bytes, ctx, opts)
   if model.borderAlphaZero and model.borderAlphaZero > 0.9 then
     model.type = "transparent"
     model.confidence = model.borderAlphaZero
-    model.description = format("A borda já é transparente (%.1f%% dos pixels). Nada a remover.",
+    model.description = format("Border is already transparent (%.1f%% of pixels). Nothing to remove.",
                                model.borderAlphaZero * 100)
     model.elapsed = clock() - t0
     return model
@@ -298,12 +298,12 @@ function M.analyze(bytes, ctx, opts)
   local mode = opts.mode
   local tol = opts.tolerance
 
-  -- 1) Fundo plano -------------------------------------------------------------
+  -- 1) Flat background ---------------------------------------------------------
   if mode == "auto" or mode == "flat" then
     if model.topShare >= 0.80 then
       model.type = "flat"
       model.confidence = model.topShare
-      model.description = format("Fundo plano detectado: cor %s (%.1f%% da borda).",
+      model.description = format("Flat background detected: color %s (%.1f%% of the border).",
                                  topColors[1].hex, model.topShare * 100)
       model.elapsed = clock() - t0
       return model
@@ -311,14 +311,14 @@ function M.analyze(bytes, ctx, opts)
     if mode == "flat" then
       model.type = "flat"
       model.confidence = model.topShare
-      model.description = format("Modo 'cor sólida' forçado: %s (%.1f%% da borda).",
+      model.description = format("Forced 'solid color' mode: %s (%.1f%% of the border).",
                                  topColors[1].hex, model.topShare * 100)
       model.elapsed = clock() - t0
       return model
     end
   end
 
-  -- 2) Padrão em tile (xadrez / listras / trama) --------------------------------
+  -- 2) Tile pattern (checker / stripes / weave) --------------------------------
   if mode == "auto" or mode == "tile" then
     local best = nil
     for _, ts in ipairs(TILE_SIZES) do
@@ -352,11 +352,11 @@ function M.analyze(bytes, ctx, opts)
       end
       model.tileColors = ncolors
       if best.P == 1 and best.Q == 1 then
-        model.description = format("Fundo de cor única (tile 1x1, %.0f%% de acerto): %s.",
+        model.description = format("Single-color background (1x1 tile, %.0f%% match): %s.",
                                    best.score * 100, ncolors[1] or "?")
       else
         model.description = format(
-          "Padrão repetitivo detectado: tile %dx%d (%.0f%% de acerto na borda), %d cor(es): %s.",
+          "Repeating pattern detected: %dx%d tile (%.0f%% border match), %d color(s): %s.",
           best.P, best.Q, best.score * 100, #ncolors, concat(ncolors, ", "))
       end
       model.elapsed = clock() - t0
@@ -367,7 +367,7 @@ function M.analyze(bytes, ctx, opts)
       model.tileP, model.tileQ = 1, 1
       model.tileMap = { [0] = topColors[1].key }
       model.confidence = model.topShare
-      model.description = format("Nenhum tile periódico confiável; usando cor dominante %s.",
+      model.description = format("No reliable periodic tile; using dominant color %s.",
                                  topColors[1].hex)
       model.elapsed = clock() - t0
       return model
@@ -410,7 +410,7 @@ function M.analyze(bytes, ctx, opts)
       local cb = solve3(A, { Sb, Sub, Svb })
       local ca = solve3(A, { Sa, Sua, Sva })
       if cr and cg and cb and ca then
-        -- erro residual
+        -- residual error
         local se, cnt = 0, 0
         for y = 0, h - 1 do
           local list = ranges[y]
@@ -434,7 +434,7 @@ function M.analyze(bytes, ctx, opts)
             end
           end
         end
-        local rms = sqrt(se / max(1, cnt)) / 2  -- média por canal (aprox. RGBA/2)
+        local rms = sqrt(se / max(1, cnt)) / 2  -- average per channel (approx. RGBA/2)
         local span = (abs(cr[2]) + abs(cr[3]) + abs(cg[2]) + abs(cg[3])
                       + abs(cb[2]) + abs(cb[3])) / 6
         model.gradientRms = rms
@@ -444,7 +444,7 @@ function M.analyze(bytes, ctx, opts)
           model.grad = { r = cr, g = cg, b = cb, a = ca }
           model.confidence = max(0, 1 - rms / max(1, tol))
           model.description = format(
-            "Gradiente detectado: variação média %.0f por canal, erro residual %.1f, %d cor(es) na borda.",
+            "Gradient detected: average variation %.0f per channel, residual error %.1f, %d color(s) on the border.",
             span, rms, #topColors)
           model.elapsed = clock() - t0
           return model
@@ -453,12 +453,12 @@ function M.analyze(bytes, ctx, opts)
     end
   end
 
-  -- 4) Fallback: conjunto de cores + inundação -----------------------------------
+  -- 4) Fallback: color set + flood -----------------------------------------------
   model.type = "set"
   model.confidence = acc
   if mode == "flood" then
     model.description = format(
-      "Modo inundação forçado: %d cor(es) de borda (%s), cobrindo %.0f%% da borda.",
+      "Forced flood mode: %d border color(s) (%s), covering %.0f%% of the border.",
       #topColors, concat((function()
         local t = {}
         for i = 1, min(4, #topColors) do t[i] = topColors[i].hex end
@@ -466,8 +466,8 @@ function M.analyze(bytes, ctx, opts)
       end)(), ", "), acc * 100)
   else
     model.description = format(
-      "Fundo complexo/sem padrão claro: %d cor(es) principais (%s), cobrindo %.0f%% da borda. " ..
-      "Será usada correspondência por conjunto de cores.",
+      "Complex background/no clear pattern: %d main color(s) (%s), covering %.0f%% of the border. " ..
+      "Color-set matching will be used.",
       #topColors, concat((function()
         local t = {}
         for i = 1, min(4, #topColors) do t[i] = topColors[i].hex end
@@ -482,7 +482,7 @@ end
 -- LUTs lazily computadas
 --------------------------------------------------------------------------------
 
--- Cria uma tabela cujos valores são calculados sob demanda (memoização).
+-- Creates a table whose values are computed on demand (memoization).
 local function lazyTable(fn)
   return setmetatable({}, {
     __index = function(t, k)
@@ -494,9 +494,9 @@ local function lazyTable(fn)
 end
 
 --------------------------------------------------------------------------------
--- computeFlags(): classifica cada pixel
---   '1' = candidato a fundo
---   'S' = pixel de borda suave (não apagado, mas pode receber alpha reduzido)
+-- computeFlags(): classifies each pixel
+--   '1' = background candidate
+--   'S' = soft edge pixel (not erased, but may get reduced alpha)
 --   '0' = sujeito (mantido)
 --------------------------------------------------------------------------------
 
@@ -513,7 +513,7 @@ function M.computeFlags(bytes, ctx, model, opts)
   local pattern1 = "(" .. rep(".", bpp) .. ")"
   local flags = {}
 
-  -- LUT de distâncias (para suavização de borda), compartilhada
+  -- distance LUT (for edge softening), shared
   local distLut = nil
   local function makeDistFn(colorList)
     return function(key)
@@ -530,7 +530,7 @@ function M.computeFlags(bytes, ctx, model, opts)
   end
 
   --------------------------------------------------------------------------------
-  -- Caso A: cores fixas (flat / set) - uma única LUT para todo o frame
+  -- Case A: fixed colors (flat / set) - a single LUT for the whole frame
   --------------------------------------------------------------------------------
   local function buildSetLUT(colorList, extraDist)
     local lut
@@ -558,7 +558,7 @@ function M.computeFlags(bytes, ctx, model, opts)
 
   if mode == "tile" and model.tileP and model.tileQ then
     --------------------------------------------------------------------------------
-    -- Tile: a cada linha usamos P LUTs (uma por fase de x)
+    -- Tile: each row uses P LUTs (one per x phase)
     --------------------------------------------------------------------------------
     local P, Q = model.tileP, model.tileQ
     if P == 1 and Q == 1 then
@@ -590,7 +590,7 @@ function M.computeFlags(bytes, ctx, model, opts)
         return l
       end
 
-      -- gera o pattern e a função de grupo para P pixels por vez
+      -- generates the pattern and the group function for P pixels at a time
       local groupPattern = rep(pattern1, P)
       local names, rets = {}, {}
       for i = 1, P do names[i] = "k" .. i end
@@ -626,7 +626,7 @@ function M.computeFlags(bytes, ctx, model, opts)
 
   elseif mode == "gradient" and model.grad then
     --------------------------------------------------------------------------------
-    -- Gradiente: a previsão depende de (x,y), calculada por pixel
+    -- Gradient: the prediction depends on (x,y), computed per pixel
     --------------------------------------------------------------------------------
     local gr, gg, gb, ga = model.grad.r, model.grad.g, model.grad.b, model.grad.a
     local iw, ih = 1 / max(1, w - 1), 1 / max(1, h - 1)
@@ -635,7 +635,7 @@ function M.computeFlags(bytes, ctx, model, opts)
       local v = y * ih
       local br, bg2, bb, ba = gr[1] + gr[3] * v, gg[1] + gg[3] * v,
                               gb[1] + gb[3] * v, ga[1] + ga[3] * v
-      local ar, ag, ab, aa = gr[2], gg[2], gb[2], ga[2]   -- u já vem normalizado
+      local ar, ag, ab, aa = gr[2], gg[2], gb[2], ga[2]   -- u is already normalized
       local x = 0
       flags[y + 1] = gsub(row, pattern1, function(key)
         local r, g, b, a = unpackKey(key, bpp, pal)
@@ -651,7 +651,7 @@ function M.computeFlags(bytes, ctx, model, opts)
 
   else
     --------------------------------------------------------------------------------
-    -- Flat / set / unknown: LUT única
+    -- Flat / set / unknown: single LUT
     --------------------------------------------------------------------------------
     local colors = model.colors
     if #colors == 0 then
@@ -669,9 +669,9 @@ function M.computeFlags(bytes, ctx, model, opts)
 end
 
 --------------------------------------------------------------------------------
--- connectivity(): componentes conexos dos candidatos (4-conexão)
+-- connectivity(): connected components of the candidates (4-connectivity)
 --   Devolve, por linha, a lista de spans {x1,x2,remove} (0-based, inclusivo)
---   ou nil se o número de spans passar do limite (o chamador cai no modo global).
+--   or nil if the number of spans exceeds the limit (caller falls back to global mode).
 --------------------------------------------------------------------------------
 
 function M.connectivity(flags, w, h, opts)
@@ -728,7 +728,7 @@ function M.connectivity(flags, w, h, opts)
     end
   end
 
-  -- liga spans de linhas adjacentes que se sobrepõem
+  -- links spans of adjacent rows that overlap
   for y = 2, h do
     local a1, a2 = rowStart[y - 1], rowRuns[y - 1]
     local b1, b2 = rowStart[y], rowRuns[y]
@@ -745,7 +745,7 @@ function M.connectivity(flags, w, h, opts)
     end
   end
 
-  -- decide o que remover
+  -- decides what to remove
   local contiguous = opts.contiguous
   local removeIslands = opts.removeIslands
   local spansByRow = {}
@@ -794,7 +794,7 @@ function M.applyMask(bytes, ctx, spansByRow, opts, flags, distLut)
   local removed = 0
   local softened = 0
 
-  -- Para a suavização precisamos saber, por linha, quais spans foram removidos
+  -- For softening we need to know, per row, which spans were removed
   local function isRemovedNear(y, x)
     local t = spansByRow[y]
     if not t then return false end
@@ -827,7 +827,7 @@ function M.applyMask(bytes, ctx, spansByRow, opts, flags, distLut)
       row = concat(pieces)
     end
 
-    -- suavização das bordas (alpha proporcional à distância do modelo)
+    -- edge softening (alpha proportional to the model distance)
     if useSoft and flags and distLut and flags[y] then
       local patches, np = nil, 0
       for s, e in gmatch(flags[y], "()S+()") do
@@ -848,7 +848,7 @@ function M.applyMask(bytes, ctx, spansByRow, opts, flags, distLut)
                   elseif bpp == 2 then
                     nb = string.char(r, na)
                   else
-                    nb = key  -- indexado: não mexe no alpha por pixel
+                    nb = key  -- indexed: doesn't touch per-pixel alpha
                   end
                   if nb ~= key then
                     if not patches then patches = {} end
@@ -916,7 +916,7 @@ function M.processWithModel(bytes, ctx, model, opts)
 
   if model.type == "empty" then
     report.ok = false
-    report.reason = "Frame vazio."
+    report.reason = "Empty frame."
     report.removed = 0
     report.total = ctx.w * ctx.h
     report.percent = 0
@@ -926,7 +926,7 @@ function M.processWithModel(bytes, ctx, model, opts)
 
   if model.type == "transparent" then
     report.ok = false
-    report.reason = "Fundo já transparente."
+    report.reason = "Background already transparent."
     report.removed = 0
     report.total = ctx.w * ctx.h
     report.percent = 0
@@ -946,10 +946,10 @@ function M.processWithModel(bytes, ctx, model, opts)
       report.nRuns = conn.nRuns
       report.connectivityElapsed = conn.elapsed
     else
-      -- muitos spans: cai no modo global (todos os candidatos são fundo)
+      -- too many spans: falls back to global mode (all candidates are background)
       report.warnings[#report.warnings + 1] = format(
-        "Muitos segmentos de fundo (%d > %d): conectividade desativada neste frame, " ..
-        "usando correspondência global pelo padrão detectado.", nRuns or 0, opts.maxRuns)
+        "Too many background segments (%d > %d): connectivity disabled on this frame, " ..
+        "using global matching from the detected pattern.", nRuns or 0, opts.maxRuns)
       spansByRow = nil
     end
   end

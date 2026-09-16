@@ -78,7 +78,7 @@ function M.run(cfg)
   app.range = { type = RangeType.FRAMES, frames = selFrames, cels = {} }
 
   -- dispara o comando exatamente como o menu faria
-  local cmdId = cfg.command or "SmartBgRemover"
+  local cmdId = cfg.command or "SmartBgRemoverPreview"
   local cmd = MOCK_COMMANDS[cmdId]
   if not cmd then
     error("comando não registrado: " .. tostring(cmdId))
