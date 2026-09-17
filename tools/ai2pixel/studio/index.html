@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai2pixel Studio — Grade-Nativa</title>
+<style>
+  :root { --bg:#12141c; --panel:#1b1e2b; --line:#2c3040; --txt:#e8eaf2; --mut:#9aa1b5; --acc:#7ee081; --acc2:#5aa9ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.5 system-ui, sans-serif; }
+  header { padding:18px 22px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline; }
+  header h1 { margin:0; font-size:19px; }
+  header span { color:var(--mut); }
+  main { display:grid; grid-template-columns:330px 1fr; gap:18px; padding:18px 22px; }
+  #drop { border:2px dashed var(--line); border-radius:12px; padding:26px 16px; text-align:center; color:var(--mut); cursor:pointer; transition:.15s; }
+  #drop.over { border-color:var(--acc); color:var(--acc); }
+  fieldset { border:1px solid var(--line); border-radius:12px; background:var(--panel); margin:14px 0; padding:12px 14px; }
+  legend { color:var(--acc); padding:0 6px; font-weight:600; }
+  label { display:flex; justify-content:space-between; gap:10px; margin:7px 0; color:var(--mut); align-items:center; }
+  select, input { background:#0e1017; color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:5px 8px; }
+  button { background:var(--acc); color:#0c130c; border:0; border-radius:8px; padding:9px 14px; font-weight:700; cursor:pointer; }
+  button.sec { background:#262a3a; color:var(--txt); font-weight:500; }
+  button:disabled { opacity:.4; cursor:default; }
+  #barwrap { height:6px; background:#0e1017; border-radius:4px; overflow:hidden; margin:10px 0 4px; }
+  #bar { height:100%; width:0; background:linear-gradient(90deg,var(--acc2),var(--acc)); transition:.2s; }
+  #status { color:var(--mut); min-height:20px; }
+  #filelist { color:var(--mut); font-size:12px; word-break:break-all; }
+  #stage { display:none; flex-direction:column; gap:12px; }
+  .canv { display:flex; gap:14px; flex-wrap:wrap; }
+  .canv figure { margin:0; background:repeating-conic-gradient(#20232e 0 25%, #171a23 0 50%) 0 0/18px 18px; border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .canv figcaption { color:var(--mut); font-size:12px; margin-bottom:6px; }
+  canvas { image-rendering:pixelated; display:block; max-width:100%; }
+  #swatches span { display:inline-block; width:22px; height:22px; border-radius:4px; margin:2px; border:1px solid #0008; }
+  table { border-collapse:collapse; width:100%; }
+  td { border-bottom:1px solid var(--line); padding:5px 8px; }
+  td:first-child { color:var(--mut); width:45%; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+</style>
+</head>
+<body>
+<header><h1>ai2pixel Studio</h1><span>metodologia Grade-Nativa · pseudo pixel art de IA → pixel art autêntica 1:1 · 100% no navegador</span></header>
+<main>
+  <aside>
+    <div id="drop">Arraste aqui as imagens geradas por IA<br>(frames de animação ou artes únicas)<br><small>ou clique para escolher</small></div>
+    <input id="pick" type="file" accept="image/*" multiple hidden>
+    <p id="filelist">—</p>
+    <fieldset id="controls" disabled>
+      <legend>Parâmetros</legend>
+      <label>Máx. de cores <select id="colors">
+        <option value="8">8</option><option value="16">16</option>
+        <option value="24">24</option><option value="32" selected>32 (auto-exata se ≤)</option>
+        <option value="48">48</option><option value="64">64</option></select></label>
+      <label>Chroma-key <select id="chroma">
+        <option value="auto" selected>auto (fundo sólido)</option>
+        <option value="off">desligado</option>
+        <option value="#00e246">verde #00E246</option>
+        <option value="#00ff00">verde puro #00FF00</option>
+        <option value="#0000ff">azul #0000FF</option>
+        <option value="#ff00ff">magenta #FF00FF</option></select></label>
+      <label>Tolerância chroma <input id="tol" type="number" value="90" min="20" max="220" step="5" style="width:80px"></label>
+      <label>Limpeza de órfãos <select id="cleanup">
+        <option value="0">off</option><option value="1" selected>1 passada</option><option value="2">2 passadas</option></select></label>
+      <label>FPS da prévia <input id="fps" type="number" value="12" min="1" max="30" style="width:70px"></label>
+      <button id="run" disabled style="width:100%;margin-top:8px">Converter para pixel art nativo</button>
+      <div id="barwrap"><div id="bar"></div></div>
+      <div id="status"></div>
+    </fieldset>
+    <fieldset id="exports" disabled>
+      <legend>Exportar</legend>
+      <div class="row">
+        <button class="sec" id="ex-zip">Frames PNG (ZIP)</button>
+        <button class="sec" id="ex-sheet">Sprite sheet</button>
+        <button class="sec" id="ex-gif">GIF animado</button>
+        <button class="sec" id="ex-gpl">Paleta .gpl</button>
+        <button class="sec" id="ex-act">Paleta .act</button>
+        <button class="sec" id="ex-json">Relatório .json</button>
+      </div>
+      <p style="color:var(--mut);font-size:12px">Os PNG nativos abrem direto no Aseprite; carregue a <code>.gpl</code> em
+      <em>Editar → Paleta</em> ou use <code>tools/ai2pixel/aseprite/ai2pixel_import.lua</code>.</p>
+    </fieldset>
+  </aside>
+  <section id="stage">
+    <div class="row">
+      <button class="sec" id="prev">◀</button>
+      <button id="play">▶ reproduzir</button>
+      <button class="sec" id="next">▶</button>
+      <span id="framelab" style="color:var(--mut)"></span>
+      <label style="margin:0">zoom <input id="zoom" type="range" min="1" max="16" value="6" style="width:120px"></label>
+    </div>
+    <div class="canv">
+      <figure><figcaption>original (IA)</figcaption><canvas id="before"></canvas></figure>
+      <figure><figcaption>pixel art nativo (1 px = 1 px)</figcaption><canvas id="after"></canvas></figure>
+    </div>
+    <div><strong style="color:var(--acc)">Paleta recuperada</strong><div id="swatches"></div></div>
+    <table id="report"></table>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
